@@ -6,7 +6,7 @@
 
 
 int main(int argc, char *argv[]){
-    int i, done = 0, n, count, rank,numprocs,received;
+    int i, done = 0, n, count, rank,numprocs,received=0;
     double PI25DT = 3.141592653589793238462643;
     double pi, x, y, z;
     MPI_Status Status;
@@ -39,14 +39,12 @@ int main(int argc, char *argv[]){
             if(z <= 1.0)
                 count++;
         }
-        if (rank == root) {
-            int total = 0;
-            for (i = 0; i < numprocs; i++)
-                total += count;
-            pi = ((double) total / (double) n) * 4.0;
-            printf("pi is approx. %.16f, Error is %.16f\n", pi, fabs(pi - PI25DT));
-        }
+        MPI_Reduce(&count, &received, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
+        if (rank==root){
+            pi = ((double) received / (double) n) * 4.0;
+            printf("pi is approx. %.16f, Error is %.16f\n", pi, fabs(pi - PI25DT));
+          }
     }
     MPI_Finalize();
     return 0;
