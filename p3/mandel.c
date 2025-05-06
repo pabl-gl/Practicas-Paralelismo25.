@@ -7,6 +7,7 @@ with z_0 = 0 does not tend to infinity.*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <mpi/mpi.h> 
 
 #define DEBUG 1
 
@@ -33,33 +34,49 @@ static inline double get_seconds(struct timeval t_ini, struct timeval t_end)
          (t_end.tv_sec - t_ini.tv_sec);
 }
 
-int main ( )
+int main ( int argc, char *argv[])
 {
 
   /* Mandelbrot variables */
-  int i, j, k;
+  int i, j, k, trozo, rank, nprocs;
   Compl   z, c;
   float   lengthsq, temp;
   int *vres, *res[Y_RESN];
+  double tcomm,tcomp,tcommf=0.0,tcompf=0.0;
+  
+  MPI_Init(&argc, &argv);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+
+  trozo = Y_RESN / nprocs;
+  int *localRes = malloc(trozo * X_RESN * sizeof(int));
+
 
   /* Timestamp variables */
-  struct timeval  ti, tf;
+  struct timeval  ti, tf,tci;
 
   /* Allocate result matrix of Y_RESN x X_RESN */
-  vres = (int *) malloc(Y_RESN * X_RESN * sizeof(int));
-  if (!vres)
-  {
-    fprintf(stderr, "Error allocating memory\n");
-    return 1;
-  }
-  for (i=0; i<Y_RESN; i++)
-    res[i] = vres + i*X_RESN;
+if (rank == 0) {
+    vres = (int *) malloc(Y_RESN * X_RESN * sizeof(int));
+    if (!vres) {
+        fprintf(stderr, "Error allocating memory\n");
+        return 1;
+    }
+
+    for (i = 0; i < Y_RESN; i++) {
+        res[i] = vres + i * X_RESN;
+    }
+} else {
+    vres = NULL;
+}
+
+  
 
   /* Start measuring time */
   gettimeofday(&ti, NULL);
 
   /* Calculate and draw points */
-  for(i=0; i < Y_RESN; i++)
+  for(i=rank*trozo; i < (rank+1)*trozo; i++)
   {
     for(j=0; j < X_RESN; j++)
     {
@@ -77,25 +94,37 @@ int main ( )
         k++;
       } while (lengthsq < 4.0 && k < maxIterations);
 
-      if (k >= maxIterations) res[i][j] = 0;
-      else res[i][j] = k;
+      if (k >= maxIterations) localRes[i % trozo * X_RESN + j]= 0;
+      else localRes[i % trozo * X_RESN + j] = k;
     }
   }
 
+  gettimeofday(&tci, NULL);
+
+  MPI_Gather(localRes,trozo*X_RESN,MPI_INT,vres,trozo*X_RESN,MPI_INT,0,MPI_COMM_WORLD);
+
   /* End measuring time */
   gettimeofday(&tf, NULL);
-  fprintf (stderr, "(PERF) Time (seconds) = %lf\n", get_seconds(ti,tf));
+
+  tcomm = get_seconds(tci,tf);
+  tcomp = get_seconds(ti,tf);
+  MPI_Reduce(&tcomm,&tcommf,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
+  MPI_Reduce(&tcomp,&tcompf,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
 
   /* Print result out */
+  if(rank==0){
   if( DEBUG ) {
     for(i=0;i<Y_RESN;i++) {
       for(j=0;j<X_RESN;j++)
               printf("%3d ", res[i][j]);
       printf("\n");
     }
+    printf("Tiempo computacional: %lf\n",tcomp);
+    printf("Tiempo comunicación: %lf\n",tcomm);
+    free(vres); 
   }
-
-  free(vres);
-
+  }
+  free(localRes);
+  MPI_Finalize();
   return 0;
 }
