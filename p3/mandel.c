@@ -38,19 +38,27 @@ int main ( int argc, char *argv[])
 {
 
   /* Mandelbrot variables */
-  int i, j, k, trozo, rank, nprocs;
+  int i, j, k, trozo, initrozo, resto, rank, nprocs;
   Compl   z, c;
   float   lengthsq, temp;
-  int *vres, *res[Y_RESN];
+  int *vres,*recvcounts, *displs, *res[Y_RESN];
   double tcomm,tcomp,tcommf=0.0,tcompf=0.0;
   
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
-  trozo = Y_RESN / nprocs;
+  resto = Y_RESN % nprocs;
+  if(rank<resto) { // los primeros procesos tendrán una fila más para cubrir el resto
+    trozo = Y_RESN / nprocs +1;
+    initrozo = rank * trozo;
+  }
+  else {
+    trozo = Y_RESN / nprocs;
+    initrozo = rank * trozo + resto;
+  }
+  
   int *localRes = malloc(trozo * X_RESN * sizeof(int));
-
 
   /* Timestamp variables */
   struct timeval  ti, tf,tci;
@@ -58,6 +66,18 @@ int main ( int argc, char *argv[])
   /* Allocate result matrix of Y_RESN x X_RESN */
 if (rank == 0) {
     vres = (int *) malloc(Y_RESN * X_RESN * sizeof(int));
+    recvcounts = malloc(nprocs * sizeof(int)); // almacena la cantidad de datos que será enviada de cada proceso
+    displs = malloc(nprocs * sizeof(int));  //desplazamiento de esos datos
+    int desp = 0;
+    for (i = 0; i < nprocs; i++) {
+      if (i < resto) {
+          recvcounts[i] = (Y_RESN / nprocs + 1) * X_RESN;
+      } else {
+          recvcounts[i] = (Y_RESN / nprocs) * X_RESN;
+      }
+      displs[i] = desp;
+      desp+= recvcounts[i];
+  }
     if (!vres) {
         fprintf(stderr, "Error allocating memory\n");
         return 1;
@@ -66,17 +86,19 @@ if (rank == 0) {
     for (i = 0; i < Y_RESN; i++) {
         res[i] = vres + i * X_RESN;
     }
-} else {
+} 
+else {
     vres = NULL;
+    recvcounts=NULL;
+    displs=NULL;
 }
 
   
-
   /* Start measuring time */
   gettimeofday(&ti, NULL);
 
   /* Calculate and draw points */
-  for(i=rank*trozo; i < (rank+1)*trozo; i++)
+  for(i=initrozo; i < initrozo + trozo; i++)
   {
     for(j=0; j < X_RESN; j++)
     {
@@ -94,14 +116,14 @@ if (rank == 0) {
         k++;
       } while (lengthsq < 4.0 && k < maxIterations);
 
-      if (k >= maxIterations) localRes[i % trozo * X_RESN + j]= 0;
-      else localRes[i % trozo * X_RESN + j] = k;
+      if (k >= maxIterations) localRes[(i-initrozo) * X_RESN + j]= 0;
+      else localRes[(i-initrozo)* X_RESN + j] = k;
     }
   }
-
+  
   gettimeofday(&tci, NULL);
 
-  MPI_Gather(localRes,trozo*X_RESN,MPI_INT,vres,trozo*X_RESN,MPI_INT,0,MPI_COMM_WORLD);
+  MPI_Gatherv(localRes,trozo*X_RESN,MPI_INT,vres,recvcounts,displs,MPI_INT,0,MPI_COMM_WORLD);
 
   /* End measuring time */
   gettimeofday(&tf, NULL);
@@ -125,6 +147,8 @@ if (rank == 0) {
   }
   }
   free(localRes);
+  free(recvcounts);
+  free(displs);
   MPI_Finalize();
   return 0;
 }
